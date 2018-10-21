@@ -2,6 +2,7 @@ package rcache
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,6 +20,7 @@ type Cache struct {
 	fetcher      Fetcher
 	ttl          time.Duration
 	items        map[string]*Item
+	atomLock     uint32
 	fetchingLock sync.Mutex
 	fetchings    map[string]time.Time
 }
@@ -86,13 +88,13 @@ func (c *Cache) cfetch(key string) {
 	now := time.Now()
 	c.fetchingLock.Lock()
 	start, exists := c.fetchings[key]
-	if exists && start.Add(FETCH_TIME_LIMIT).Before(now) {
+	if (exists && start.Add(FETCH_TIME_LIMIT).Before(now)) || !atomic.CompareAndSwapUint32(&c.atomLock, 0, 1) {
 		c.fetchingLock.Unlock()
 		return
 	}
+	defer atomic.StoreUint32(&c.atomLock, 0)
 	c.fetchings[key] = now
 	c.fetchingLock.Unlock()
-
 	c.fetch(key)
 	c.fetchingLock.Lock()
 	delete(c.fetchings, key)
